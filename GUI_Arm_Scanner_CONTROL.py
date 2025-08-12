@@ -87,8 +87,6 @@ class RobotArmClient(QThread):
     def capture_scan(self):
         response = self.send_scanner_command("CAPTURE")
         if response == "SCAN_COMPLETE":
-            point_cloud = np.random.rand(1000, 3)  # Mock data
-            self.scan_complete.emit(point_cloud)
             return True
         return False
 
@@ -110,6 +108,15 @@ class RobotArmClient(QThread):
 
     def disconnect_scanner(self):
         if self.scanner_socket:
+            try:
+                self.scanner_socket.sendall("DISCONNECT".encode('utf-8'))
+                # Wait for a response from the scanner (e.g., confirmation)
+                self.scanner_socket.settimeout(3)  # Optional: timeout to prevent hanging
+                response = self.scanner_socket.recv(1024).decode('utf-8')
+                self.scanner_status.emit(f"Scanner disconnect response: {response}")
+
+            except Exception as e:
+                self.scanner_status.emit(f"Error sending disconnect command: {str(e)}")
             self.scanner_socket.close()
             self.scanner_connected = False
             self.scanner_status.emit("Disconnected from scanner")
@@ -121,15 +128,7 @@ class RobotArmClient(QThread):
 class PointCloudViewer(QWidget):
     def __init__(self):
         super().__init__()
-        self.init_ui()
         self.point_cloud = None
-
-    def init_ui(self):
-        layout = QVBoxLayout()
-        self.view_button = QPushButton("View Point Cloud")
-        self.view_button.clicked.connect(self.show_point_cloud)
-        layout.addWidget(self.view_button)
-        self.setLayout(layout)
 
     def show_point_cloud(self):
         if self.point_cloud is not None:
@@ -233,11 +232,16 @@ class RoboticArmGUI(QMainWindow):
         pc_layout = QVBoxLayout()
         
         self.pc_viewer = PointCloudViewer()
+
         self.save_btn = QPushButton("Save Point Cloud")
         self.save_btn.setEnabled(False)
+
+        self.view_button = QPushButton("View Point Cloud")
+        self.view_button.setEnabled(False)
         
         pc_layout.addWidget(self.pc_viewer)
         pc_layout.addWidget(self.save_btn)
+        pc_layout.addWidget(self.view_button)
         pc_group.setLayout(pc_layout)
 
         # Status Group
@@ -262,14 +266,24 @@ class RoboticArmGUI(QMainWindow):
         self.setCentralWidget(central_widget)
 
     def setup_connections(self):
+        # Arm connection
         self.arm_connect_btn.clicked.connect(self.connect_arm)
         self.arm_disconnect_btn.clicked.connect(self.disconnect_arm)
+
+        # Scanner connection
         self.scanner_connect_btn.clicked.connect(self.connect_scanner)
         self.scanner_disconnect_btn.clicked.connect(self.disconnect_scanner)
+
+        # Arm Control 
         self.move_btn.clicked.connect(self.move_arm)
         self.capture_btn.clicked.connect(self.capture_scan)
-        self.save_btn.clicked.connect(self.save_point_cloud)
         
+        # Point Cloud
+        self.save_btn.clicked.connect(self.save_point_cloud)
+        self.view_button.clicked.connect(self.show_point_cloud)
+        
+        
+        # Status
         self.arm_client.arm_status.connect(self.update_status)
         self.arm_client.scanner_status.connect(self.update_status)
         self.arm_client.scan_complete.connect(self.handle_scan_data)
@@ -356,6 +370,18 @@ class RoboticArmGUI(QMainWindow):
             pcd.points = o3d.utility.Vector3dVector(combined_cloud)
             o3d.io.write_point_cloud(file_path, pcd)
             self.status_display.append(f"Saved point cloud to {file_path}")
+
+        # Enabling view PCL button
+        self.view_button.setEnabled(True)
+
+    def show_point_cloud(self):
+        if not self.point_cloud:
+            self.status_display.append("No PCL to show") # Shouldn't be used because the button should be turned of if no pcl loaded
+            return
+        else :
+            self.show_point_cloud
+        
+
 
     def update_status(self, message):
         self.status_display.append(message)
