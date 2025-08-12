@@ -1,3 +1,4 @@
+import os # for filename manipulation
 import sys
 import socket
 import numpy as np
@@ -117,6 +118,7 @@ class RobotArmClient(QThread):
 
             except Exception as e:
                 self.scanner_status.emit(f"Error sending disconnect command: {str(e)}")
+                
             self.scanner_socket.close()
             self.scanner_connected = False
             self.scanner_status.emit("Disconnected from scanner")
@@ -232,16 +234,20 @@ class RoboticArmGUI(QMainWindow):
         pc_layout = QVBoxLayout()
         
         self.pc_viewer = PointCloudViewer()
-
+        
         self.save_btn = QPushButton("Save Point Cloud")
         self.save_btn.setEnabled(False)
 
-        self.view_button = QPushButton("View Point Cloud")
-        self.view_button.setEnabled(False)
+        self.open_pcl_btn = QPushButton("No file selected")
+
+        self.view_btn = QPushButton("View Point Cloud")
+        self.view_btn.setEnabled(False)
         
         pc_layout.addWidget(self.pc_viewer)
         pc_layout.addWidget(self.save_btn)
-        pc_layout.addWidget(self.view_button)
+        pc_layout.addWidget(QLabel("PCL to view:"))
+        pc_layout.addWidget(self.open_pcl_btn)
+        pc_layout.addWidget(self.view_btn)
         pc_group.setLayout(pc_layout)
 
         # Status Group
@@ -280,8 +286,8 @@ class RoboticArmGUI(QMainWindow):
         
         # Point Cloud
         self.save_btn.clicked.connect(self.save_point_cloud)
-        self.view_button.clicked.connect(self.show_point_cloud)
-        
+        self.view_btn.clicked.connect(self.show_point_cloud)
+        self.open_pcl_btn.clicked.connect(self.open_pcl_dialog)
         
         # Status
         self.arm_client.arm_status.connect(self.update_status)
@@ -373,6 +379,82 @@ class RoboticArmGUI(QMainWindow):
 
         # Enabling view PCL button
         self.view_button.setEnabled(True)
+
+    def open_pcl_dialog(self):
+        # Open file dialog and get the file path
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select a File",  # Dialog title
+            "",  # Starting directory (empty for default)
+            "Point Cloud File (*.xyz *.xyzn *.xyzrgb *pts *ply *pcd);; ASC File (*.asc);; All files (*)"  # File filters
+        )
+        
+        if file_path:
+            try:
+                filename = os.path.basename(file_path)
+                self.open_pcl_btn.setText(f"Selected: {filename}")
+                
+                # Check if file is ASC format
+                if file_path.lower().endswith('.asc'):
+                    self.point_cloud = self.read_asc_file(file_path)
+                else:
+                    # Use Open3D's built-in readers for other formats
+                    self.point_cloud = o3d.io.read_point_cloud(file_path)
+                
+                if not self.point_cloud.has_points():
+                    raise ValueError("The file contains no points")
+                
+                self.status_display.append(f"Loaded: {filename}")
+                self.view_btn.setEnabled(True)
+                
+                # Print basic info
+                self.status_display.append(f"Points: {len(self.point_cloud.points)}")
+                if self.point_cloud.has_colors():
+                    self.status_display.append("Contains color information")
+                if self.point_cloud.has_normals():
+                    self.status_display.append("Contains normal vectors")
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load file:\n{str(e)}")
+
+    def read_asc_file(self, file_path):
+        """Custom ASC file reader that creates an Open3D point cloud"""
+        points = []
+        colors = []
+        
+        with open(file_path, 'r') as f:
+            for line in f:
+                # Skip empty lines and comments
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                    
+                parts = line.split()
+                try:
+                    # Try to read at least 3 coordinates (x,y,z)
+                    x, y, z = map(float, parts[:3])
+                    points.append([x, y, z])
+                    
+                    # If we have 6+ values, assume they're RGB colors (0-255)
+                    if len(parts) >= 6:
+                        r, g, b = map(float, parts[3:6])
+                        colors.append([r/255, g/255, b/255])  # Normalize to 0-1
+                        
+                except (ValueError, IndexError) as e:
+                    print(f"Skipping malformed line: {line}")
+                    continue
+        
+        if not points:
+            raise ValueError("ASC file contains no valid points")
+        
+        # Create Open3D point cloud
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(np.array(points))
+        
+        if colors and len(colors) == len(points):
+            pcd.colors = o3d.utility.Vector3dVector(np.array(colors))
+        
+        return pcd
 
     def show_point_cloud(self):
         if not self.point_cloud:
