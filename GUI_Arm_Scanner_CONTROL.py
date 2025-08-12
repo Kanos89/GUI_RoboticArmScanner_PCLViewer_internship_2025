@@ -1,5 +1,6 @@
 import os # for filename manipulation
 import sys
+import math
 import socket
 import numpy as np
 import open3d as o3d
@@ -130,16 +131,31 @@ class RobotArmClient(QThread):
 class PointCloudViewer(QWidget):
     def __init__(self):
         super().__init__()
-        self.point_cloud = None
-
-    def show_point_cloud(self):
-        if self.point_cloud is not None:
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(self.point_cloud)
-            o3d.visualization.draw_geometries([pcd])
+        self.point_cloud = None  # This stores numpy array points
+        self.o3d_pointcloud = None  # This will store the Open3D point cloud object
 
     def update_point_cloud(self, data):
+        """Store both numpy and Open3D versions of the point cloud"""
         self.point_cloud = data
+        self.o3d_pointcloud = o3d.geometry.PointCloud()
+        self.o3d_pointcloud.points = o3d.utility.Vector3dVector(data)
+
+    def show_point_cloud(self):
+        """Visualize the point cloud using Open3D"""
+        if self.o3d_pointcloud is not None:
+            # Customize visualization
+            vis = o3d.visualization.Visualizer()
+            vis.create_window(window_name="Point Cloud Viewer")
+            vis.add_geometry(self.o3d_pointcloud)
+            
+            # Set visualization options
+            opt = vis.get_render_option()
+            opt.background_color = np.array([0.1, 0.1, 0.1])  # Dark background
+            opt.point_size = 2.0
+            
+            vis.run()
+            vis.destroy_window()
+
 
 class RoboticArmGUI(QMainWindow):
     def __init__(self):
@@ -381,12 +397,11 @@ class RoboticArmGUI(QMainWindow):
         self.view_button.setEnabled(True)
 
     def open_pcl_dialog(self):
-        # Open file dialog and get the file path
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Select a File",  # Dialog title
-            "",  # Starting directory (empty for default)
-            "Point Cloud File (*.xyz *.xyzn *.xyzrgb *pts *ply *pcd);; ASC File (*.asc);; All files (*)"  # File filters
+            "Select a File",
+            "",
+            "ASC Files (*.asc);;Point Cloud Files (*.xyz *.xyzn *.xyzrgb *.pts *.ply *.pcd);;All Files (*)"
         )
         
         if file_path:
@@ -394,20 +409,22 @@ class RoboticArmGUI(QMainWindow):
                 filename = os.path.basename(file_path)
                 self.open_pcl_btn.setText(f"Selected: {filename}")
                 
-                # Check if file is ASC format
+                # Load file (ASC or standard format)
                 if file_path.lower().endswith('.asc'):
                     self.point_cloud = self.read_asc_file(file_path)
                 else:
-                    # Use Open3D's built-in readers for other formats
                     self.point_cloud = o3d.io.read_point_cloud(file_path)
                 
                 if not self.point_cloud.has_points():
                     raise ValueError("The file contains no points")
                 
-                self.status_display.append(f"Loaded: {filename}")
-                self.view_btn.setEnabled(True)
+                # Update the viewer with the point cloud data
+                self.pc_viewer.update_point_cloud(np.asarray(self.point_cloud.points))
                 
-                # Print basic info
+                self.status_display.append(f"Loaded: {filename}")
+                self.view_btn.setEnabled(True)  # Enable view button
+                
+                # Display point cloud info
                 self.status_display.append(f"Points: {len(self.point_cloud.points)}")
                 if self.point_cloud.has_colors():
                     self.status_display.append("Contains color information")
@@ -416,55 +433,86 @@ class RoboticArmGUI(QMainWindow):
                 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load file:\n{str(e)}")
+                self.point_cloud = None  # Clear on error
 
     def read_asc_file(self, file_path):
-        """Custom ASC file reader that creates an Open3D point cloud"""
         points = []
         colors = []
+        normals = []
+        is_rgb = None
         
         with open(file_path, 'r') as f:
             for line in f:
-                # Skip empty lines and comments
                 line = line.strip()
                 if not line or line.startswith('#'):
                     continue
                     
                 parts = line.split()
                 try:
-                    # Try to read at least 3 coordinates (x,y,z)
+                    # Read XYZ (first 3 columns)
                     x, y, z = map(float, parts[:3])
                     points.append([x, y, z])
                     
-                    # If we have 6+ values, assume they're RGB colors (0-255)
                     if len(parts) >= 6:
-                        r, g, b = map(float, parts[3:6])
-                        colors.append([r/255, g/255, b/255])  # Normalize to 0-1
+                        col4, col5, col6 = map(float, parts[3:6])
                         
+                        # Auto-detection
+                        if is_rgb is None:
+                            # Check if values look like normals (unit vectors)
+                            magnitude = math.sqrt(col4**2 + col5**2 + col6**2)
+                            is_normal = (0.9 <= magnitude <= 1.1)  # Allow 10% tolerance
+                            
+                            # Check if values look like RGB (0-255)
+                            is_rgb = (not is_normal and 
+                                    0 <= col4 <= 255 and 
+                                    0 <= col5 <= 255 and 
+                                    0 <= col6 <= 255)
+                            
+                            # If neither, default to normals
+                            if not is_rgb and not is_normal:
+                                is_rgb = False
+                        
+                        if is_rgb:
+                            colors.append([col4/255, col5/255, col6/255])
+                        else:
+                            normals.append([col4, col5, col6])
+                            
                 except (ValueError, IndexError) as e:
-                    print(f"Skipping malformed line: {line}")
+                    self.status_display(f"Skipping malformed line: {line} ({str(e)})")
                     continue
         
         if not points:
             raise ValueError("ASC file contains no valid points")
         
-        # Create Open3D point cloud
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(np.array(points))
         
         if colors and len(colors) == len(points):
             pcd.colors = o3d.utility.Vector3dVector(np.array(colors))
         
+        if normals and len(normals) == len(points):
+            # Normalize the normals to be safe
+            normals_array = np.array(normals)
+            norms = np.linalg.norm(normals_array, axis=1)
+            normals_array = normals_array / norms[:, np.newaxis]
+            pcd.normals = o3d.utility.Vector3dVector(normals_array)
+        
         return pcd
 
     def show_point_cloud(self):
-        if not self.point_cloud:
-            self.status_display.append("No PCL to show") # Shouldn't be used because the button should be turned of if no pcl loaded
-            return
-        else :
-            self.show_point_cloud
+        try:
+            if self.pc_viewer.o3d_pointcloud is None:
+                self.status_display.append("No point cloud to display")
+                return
+                
+            # Show the point cloud
+            self.pc_viewer.show_point_cloud()
+            self.status_display.append("Displaying point cloud in Open3D viewer")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to visualize point cloud:\n{str(e)}")
+
         
-
-
     def update_status(self, message):
         self.status_display.append(message)
 
