@@ -1,8 +1,7 @@
 import os # for filename manipulation
 import sys
-import socket
 import math
-import numpy as np
+import numpy as np 
 import open3d as o3d
 
 from PyQt6.QtWidgets import (
@@ -14,123 +13,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QFont
 
-class StationController(QThread):
-    arm_status = pyqtSignal(str)
-    scanner_status = pyqtSignal(str)
-    scan_complete = pyqtSignal(np.ndarray)
+from core import StationController, DeviceType, ArmCommands, ScannerCommands, ConnectionManager
 
-    def __init__(self):
-        super().__init__()
-        self.arm_socket = None
-        self.scanner_socket = None
-        self.arm_connected = False
-        self.scanner_connected = False
-
-    def connect_arm(self, host, port):
-        try:
-            self.arm_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.arm_socket.settimeout(5)
-            self.arm_socket.connect((host, port))
-            self.arm_connected = True
-            self.arm_status.emit(f"Connected to arm at {host}:{port}")
-            return True
-        except Exception as e:
-            self.arm_status.emit(f"Arm connection error: {str(e)}")
-            return False
-
-    def connect_scanner(self, host, port):
-        try:
-            self.scanner_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.scanner_socket.settimeout(5)
-            self.scanner_socket.connect((host, port))
-            self.scanner_connected = True
-            self.scanner_status.emit(f"Connected to scanner at {host}:{port}")
-            return True
-        except Exception as e:
-            self.scanner_status.emit(f"Scanner connection error: {str(e)}")
-            return False
-
-    def send_arm_command(self, command):
-        if not self.arm_connected:
-            self.arm_status.emit("Not connected to arm")
-            return None
-
-        try:
-            self.arm_socket.settimeout(20) # wait until 20s for a response else shortcut the process
-            self.arm_socket.sendall(command.encode('utf-8'))
-            response = self.arm_socket.recv(1024).decode('utf-8')
-            self.arm_status.emit(f"Arm response: {response}")
-            return response
-        except socket.timeout:
-            self.arm_status.emit("Arm socket timed out")
-            return None
-        except Exception as e:
-            self.arm_status.emit(f"Arm command error: {str(e)}")
-            return None
-
-
-    def send_scanner_command(self, command):
-        if not self.scanner_connected:
-            self.scanner_status.emit("Not connected to scanner")
-            return None
-
-        try:
-            self.scanner_socket.settimeout(20)  # wait until 20s for a response else shortcut the process
-            self.scanner_socket.sendall(command.encode('utf-8'))
-            response = self.scanner_socket.recv(1024).decode('utf-8')
-            self.scanner_status.emit(f"Scanner response: {response}")
-            return response
-        except socket.timeout:
-            self.scanner_status.emit("Scanner socket timed out")
-            return None
-        except Exception as e:
-            self.scanner_status.emit(f"Scanner command error: {str(e)}")
-            return None
-
-    def move_to_position(self, pos_name):
-        return self.send_arm_command(f"MOVE {pos_name}")
- 
-    def capture_scan(self):
-        response = self.send_scanner_command("CAPTURE")
-        if response == "SCAN_COMPLETED":
-            return True
-        return False
-
-    def disconnect_arm(self):
-        if self.arm_socket:
-            try:
-                self.arm_socket.sendall("DISCONNECT".encode('utf-8'))
-                # Wait for a response from the arm (e.g., confirmation)
-                self.arm_socket.settimeout(3)  # Optional: timeout to prevent hanging
-                response = self.arm_socket.recv(1024).decode('utf-8')
-                self.arm_status.emit(f"Arm disconnect response: {response}")
-
-            except Exception as e:
-                self.arm_status.emit(f"Error sending disconnect command: {str(e)}")
-            self.arm_socket.close()
-            self.arm_connected = False
-            self.arm_status.emit("Disconnected from arm")
-
-
-    def disconnect_scanner(self):
-        if self.scanner_socket:
-            try:
-                self.scanner_socket.sendall("DISCONNECT".encode('utf-8'))
-                # Wait for a response from the scanner (e.g., confirmation)
-                self.scanner_socket.settimeout(3)  # Optional: timeout to prevent hanging
-                response = self.scanner_socket.recv(1024).decode('utf-8')
-                self.scanner_status.emit(f"Scanner disconnect response: {response}")
-
-            except Exception as e:
-                self.scanner_status.emit(f"Error sending disconnect command: {str(e)}")
-                
-            self.scanner_socket.close()
-            self.scanner_connected = False
-            self.scanner_status.emit("Disconnected from scanner")
-
-    def disconnect_all(self):
-        self.disconnect_arm()
-        self.disconnect_scanner()
 
 class PointCloudWidget(QWidget):
     def __init__(self):
@@ -166,7 +50,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Robotic Arm & Scanner Control System")
         self.setGeometry(100, 100, 700, 600)
-        self.arm_client = StationController()
+        self.arm_client = StationController()  # This remains the same
         self.scans = []
         self.init_ui()
         self.setup_connections()
@@ -313,6 +197,7 @@ class MainWindow(QMainWindow):
         self.arm_client.arm_status.connect(self.update_status)
         self.arm_client.scanner_status.connect(self.update_status)
 
+
     def connect_arm(self):
         host = self.arm_host_input.text().strip()
         port = self.arm_port_input.text().strip()
@@ -327,7 +212,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Input Error", "Invalid arm port number")
             return
 
-        if self.arm_client.connect_arm(host, port):
+        if self.arm_client.connect_device(DeviceType.ARM, host, port):
             self.arm_connect_btn.setEnabled(False)
             self.arm_disconnect_btn.setEnabled(True)
             self.move_btn.setEnabled(True)
@@ -346,20 +231,20 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Input Error", "Invalid scanner port number")
             return
 
-        if self.arm_client.connect_scanner(host, port):
+        if self.arm_client.connect_device(DeviceType.SCANNER, host, port):
             self.scanner_connect_btn.setEnabled(False)
             self.scanner_disconnect_btn.setEnabled(True)
             self.capture_btn.setEnabled(True)
             self.save_btn.setEnabled(True)
-
+            
     def disconnect_arm(self):
-        self.arm_client.disconnect_arm()
+        self.arm_client.disconnect_device(DeviceType.ARM)
         self.arm_connect_btn.setEnabled(True)
         self.arm_disconnect_btn.setEnabled(False)
         self.move_btn.setEnabled(False)
 
     def disconnect_scanner(self):
-        self.arm_client.disconnect_scanner()
+        self.arm_client.disconnect_device(DeviceType.SCANNER)
         self.scanner_connect_btn.setEnabled(True)
         self.scanner_disconnect_btn.setEnabled(False)
         self.capture_btn.setEnabled(False)
@@ -378,34 +263,32 @@ class MainWindow(QMainWindow):
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Save Point Cloud",
-                "pcl.ply",  # Default name with extension
+                "pcl.ply",
                 "All Files (*)"
             )
 
-            if not file_path:  # User cancelled
+            if not file_path:
                 return
 
-            # Ensure .ply extension
             file_path = os.path.splitext(file_path)[0] + '.ply'
-
             self.update_status(f"Attempting to save point cloud to {file_path}...")
 
-            # Use the scanner client to send the command
-            response = self.arm_client.send_scanner_command(f"SAVE:{file_path}")
+            # Use the new command format
+            response = self.arm_client.send_command(
+                DeviceType.SCANNER,
+                ScannerCommands.SAVE_POINTCLOUD.format(file_path=file_path)
+            )
 
             if response:
-                self.view_btn.setEnabled(True)  # Fixed typo from view_button to view_btn
+                self.view_btn.setEnabled(True)
             else:
                 self.status_display.append("Failed to receive confirmation from scanner")
-
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save point cloud:\n{str(e)}")
             self.status_display.append(f"Save error: {str(e)}")
-
         finally:
-            # Enabling view PCL button
             self.view_btn.setEnabled(True)
-
+            
     def open_pcl_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self,

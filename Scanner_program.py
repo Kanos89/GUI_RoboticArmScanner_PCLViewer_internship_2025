@@ -6,7 +6,6 @@ def start_server():
 	server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 	server_socket.bind(('127.0.0.1', 54321))
 	server_socket.listen(5)
-	server_socket.settimeout(1.0)  # Prevent accept() from hanging indefinitely
 	#print("Server waiting for connections...")
 	
 	# Input the room temperature
@@ -15,7 +14,7 @@ def start_server():
 	while True:
 		try:
 			client_socket, addr = server_socket.accept()
-			print(f"Connection from {addr}")
+			#print(f"Connection from {addr}")
 			
 			try:
 				while True:
@@ -25,7 +24,7 @@ def start_server():
 						break
 
 					message = data.decode('utf-8').strip()
-					print(f"Received: {message}")
+					#print(f"Received: {message}")
 
 					try:
 						# Process command
@@ -119,6 +118,8 @@ def start_server():
 		except Exception as e:
 			#print(f"Critical server error: {str(e)}")
 			break
+		finally:
+			client_socket.close()
 
 if __name__ == "__main__":
 	start_server()
