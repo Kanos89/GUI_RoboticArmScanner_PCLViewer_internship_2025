@@ -55,7 +55,7 @@ class RobotArmClient(QThread):
             return None
 
         try:
-            self.arm_socket.settimeout(5)
+            self.arm_socket.settimeout(20) # wait until 20s for a response else shortcut the process
             self.arm_socket.sendall(command.encode('utf-8'))
             response = self.arm_socket.recv(1024).decode('utf-8')
             self.arm_status.emit(f"Arm response: {response}")
@@ -74,10 +74,14 @@ class RobotArmClient(QThread):
             return None
 
         try:
+            self.scanner_socket.settimeout(20)  # wait until 20s for a response else shortcut the process
             self.scanner_socket.sendall(command.encode('utf-8'))
-            response = self.scanner_socket.recv(4096).decode('utf-8')
+            response = self.scanner_socket.recv(1024).decode('utf-8')
             self.scanner_status.emit(f"Scanner response: {response}")
             return response
+        except socket.timeout:
+            self.scanner_status.emit("Scanner socket timed out")
+            return None
         except Exception as e:
             self.scanner_status.emit(f"Scanner command error: {str(e)}")
             return None
@@ -85,10 +89,9 @@ class RobotArmClient(QThread):
     def move_to_position(self, pos_name):
         return self.send_arm_command(f"MOVE {pos_name}")
  
-
     def capture_scan(self):
         response = self.send_scanner_command("CAPTURE")
-        if response == "SCAN_COMPLETE":
+        if response == "SCAN_COMPLETED":
             return True
         return False
 
@@ -161,7 +164,7 @@ class RoboticArmGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Robotic Arm & Scanner Control System")
-        self.setGeometry(100, 100, 600, 500)
+        self.setGeometry(100, 100, 700, 600)
         self.arm_client = RobotArmClient()
         self.scans = []
         self.init_ui()
@@ -308,7 +311,6 @@ class RoboticArmGUI(QMainWindow):
         # Status
         self.arm_client.arm_status.connect(self.update_status)
         self.arm_client.scanner_status.connect(self.update_status)
-        self.arm_client.scan_complete.connect(self.handle_scan_data)
 
     def connect_arm(self):
         host = self.arm_host_input.text().strip()
@@ -367,41 +369,48 @@ class RoboticArmGUI(QMainWindow):
         self.arm_client.move_to_position(pos)
 
     def capture_scan(self):
-        if self.arm_client.capture_scan():
-            self.status_display.append("Scan completed successfully")
-        else:
-            self.status_display.append("Scan failed")
-
-    def handle_scan_data(self, point_cloud):
-        self.scans.append(point_cloud)
-        self.pc_viewer.update_point_cloud(point_cloud)
-        self.status_display.append("Point cloud data received")
+        if not self.arm_client.capture_scan():
+            self.update_status("Scan failed")
 
     def save_point_cloud(self):
-        if not self.scans:
-            self.status_display.append("No scans to save")
-            return
+        try:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Point Cloud",
+                "pcl.ply",  # Default name with extension
+                "All Files (*)"
+            )
 
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Point Cloud", "", "PLY Files (*.ply);;All Files (*)"
-        )
-        
-        if file_path:
-            combined_cloud = np.vstack(self.scans)
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(combined_cloud)
-            o3d.io.write_point_cloud(file_path, pcd)
-            self.status_display.append(f"Saved point cloud to {file_path}")
+            if not file_path:  # User cancelled
+                return
 
-        # Enabling view PCL button
-        self.view_button.setEnabled(True)
+            # Ensure .ply extension
+            file_path = os.path.splitext(file_path)[0] + '.ply'
+
+            self.update_status(f"Attempting to save point cloud to {file_path}...")
+
+            # Use the scanner client to send the command
+            response = self.arm_client.send_scanner_command(f"SAVE:{file_path}")
+
+            if response:
+                self.view_btn.setEnabled(True)  # Fixed typo from view_button to view_btn
+            else:
+                self.status_display.append("Failed to receive confirmation from scanner")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save point cloud:\n{str(e)}")
+            self.status_display.append(f"Save error: {str(e)}")
+
+        finally:
+            # Enabling view PCL button
+            self.view_btn.setEnabled(True)
 
     def open_pcl_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select a File",
             "",
-            "ASC Files (*.asc);;Point Cloud Files (*.xyz *.xyzn *.xyzrgb *.pts *.ply *.pcd);;All Files (*)"
+            "Point Cloud Files (*.xyz *.xyzn *.xyzrgb *.pts *.ply *.pcd);; ASC Files (*.asc);; All Files (*)"
         )
         
         if file_path:
@@ -512,13 +521,33 @@ class RoboticArmGUI(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to visualize point cloud:\n{str(e)}")
 
-        
     def update_status(self, message):
-        self.status_display.append(message)
+        self.status_display.append(message+"\n")
 
-    def closeEvent(self, event):
-        self.arm_client.disconnect_all()
-        event.accept()
+    def closeEvent(self, event):  # proper clean up of socket connections before closing the program
+        # Handle every type of closing the window (alt+f4, red cross of the window)
+        try:    
+            super().closeEvent(event)
+            
+            # Ask for closing confirmation
+            reply = QMessageBox.question(
+                self, 
+                'Quit',
+                'Are you sure you want to quit?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                # Disconnect all devices
+                self.arm_client.disconnect_all()
+                event.accept()  # Let the window close
+            else:
+                event.ignore()  # Keep the window open
+
+        except Exception as e:
+            print(f"Error during shutdown: {e}")
+            event.accept()  # Ensure window closes even if errors occur
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
