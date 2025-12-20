@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
         self.auto_scan_btn.setEnabled(False)
 
         self.auto_scan_thread = QThread()
-        self.auto_scan_worker = AutoScanWorker(self.arm_client)
+        self.auto_scan_worker = AutoScanWorker(self.arm_client, self.scanner_client)
         self.auto_scan_worker.moveToThread(self.auto_scan_thread)
 
         self.auto_scan_thread.started.connect(self.auto_scan_worker.run)
