@@ -1,8 +1,22 @@
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal, QObject
 import numpy as np
 from core.protocols import DeviceType, ArmCommands, ScannerCommands, ConnectionManager
 
+from utils.constants import (
+    DEFAULT_ARM_HOST, DEFAULT_ARM_PORT,
+    DEFAULT_SCANNER_HOST, DEFAULT_SCANNER_PORT,
+    CONNECTION_TIMEOUT, COMMAND_TIMEOUT, SCAN_POSITIONS
+)
+
 class StationController(QThread):
+
+    """
+    Main controller class for managing robotic arm and 3D scanner communication.
+    Handles socket connections, command sending, and status monitoring.
+    
+    Design Pattern: Facade - provides simplified interface to complex hardware systems
+    """
+    
     arm_status = pyqtSignal(str)
     scanner_status = pyqtSignal(str)
     scan_complete = pyqtSignal(np.ndarray)
@@ -48,7 +62,7 @@ class StationController(QThread):
     def move_to_position(self, pos_name: str):
         return self.send_command(
             DeviceType.ARM,
-            ArmCommands.MOVE.format(position=pos_name)
+            ArmCommands.MOVE.format(position=pos_name[-1]) 
         )
 
     def capture_scan(self) -> bool:
@@ -74,4 +88,40 @@ class StationController(QThread):
     def disconnect_all(self) -> None:
         self.disconnect_device(DeviceType.ARM)
         self.disconnect_device(DeviceType.SCANNER)
+
+
+class AutoScanWorker(QObject):
+    
+    """
+    Handling the autoscan feature 
+    """
+        
+    finished = pyqtSignal()
+    progress = pyqtSignal(str)
+
+    def __init__(self, arm_client):
+        super().__init__()
+        self.arm_client = arm_client
+        self._running = True
+
+    def run(self):
+        try:
+            for pos in SCAN_POSITIONS:
+                if not self._running:
+                    break
+                self.progress.emit(f"Moving arm to {pos}...")
+                self.arm_client.move_to_position(pos)
+
+                self.progress.emit("Capturing scan...")
+                self.arm_client.capture_scan()
+                #Scanner will respond once the capture finished                
+
+            self.progress.emit("Automatic scan finished")
+        except Exception as e:
+            self.progress.emit(f"Error during automatic scan: {str(e)}")
+        finally:
+            self.finished.emit()
+
+    def stop(self):
+        self._running = False
 

@@ -1,0 +1,162 @@
+<<<<<<< HEAD
+MODULE MainModule
+
+! Definition of variables for tcp ip connection
+VAR socketdev serverSocket;
+VAR socketdev clientSocket;
+VAR string data;
+VAR bool connected;
+VAR bool ok; ! needed to use StrToVal, cf rapid technnical reference manual
+VAR string position_str;
+VAR num position_num;
+VAR num nb_pos;
+
+! Robot positions
+CONST robtarget p1:=[[-12.66,5.59,1391.70],[0.5,2.63906E-8,0.866025,1.04791E-8],[0,-1,0,0],[9E+9,9E+9,9E+9,9E+9,9E+9,9E+9]];
+CONST robtarget p2:=[[-13.11,-289.23,865.56],[0.499997,-0.000123741,0.866027,0.000189551],[0,-1,0,0],[9E+9,9E+9,9E+9,9E+9,9E+9,9E+9]];
+CONST robtarget p3:=[[-13.23,323.49,865.60],[0.500307,-0.00022458,0.865848,0.000287929],[0,-1,0,0],[9E+9,9E+9,9E+9,9E+9,9E+9,9E+9]];
+CONST robtarget p4:=[[292.12,70.62,865.60],[0.500307,-0.000224538,0.865848,0.000287917],[0,-1,0,0],[9E+9,9E+9,9E+9,9E+9,9E+9,9E+9]];
+
+! Configuration of real robot
+TASK PERS tooldata Tooldata_2:=[TRUE,[[0,0,0],[1,0,0,0]],[1,[0,0,1],[1,0,0,0],0,0,0]];
+TASK PERS wobjdata Workobject_2:=[FALSE,TRUE,"",[[1000,0,0],[1,0,0,0]],[[0,0,0],[1,0,0,0]]];
+
+! Position array (robot targets)
+VAR robtarget scan_positions{4};
+
+
+PROC main()
+        ! Initialize the array elements
+        scan_positions{1} := p1;
+        scan_positions{2} := p2;
+        scan_positions{3} := p3;
+        scan_positions{4} := p4;
+        nb_pos := Dim(scan_positions, 1);
+        
+    WHILE TRUE DO
+        ! Create and bind socket
+        SocketCreate serverSocket;
+        SocketBind serverSocket, "127.0.0.1", 1234;
+        SocketListen serverSocket;
+
+        TPWrite "Waiting for connection...";
+        SocketAccept serverSocket, clientSocket;
+        TPWrite "Client connected.";
+        connected := TRUE ;
+        
+        WHILE connected DO
+            ! Receive command from Python client
+            SocketReceive clientSocket \Str:=data;
+            TPWrite "Received: " + data;
+
+            ! Execute based on command
+            IF StrMatch(data, 1, "MOVE") = 1 THEN
+                ! Extract position number from command
+                ! Expected format: "MOVE 1", "MOVE 2", etc.
+                position_str := StrPart(data, StrLen(data), 1);
+                ok:= StrToVal(position_str,position_num) ;                    
+                ! Validate position number
+                IF position_num >= 1 AND position_num <= nb_pos THEN
+                    MoveL scan_positions{position_num}, v200, fine, Tooldata_2\WObj:=Workobject_2;
+                    ! Wait for the robot to reach and stop at the position
+                    WaitRob \InPos;
+                    ! Send confirmation back
+                    SocketSend clientSocket \Str:="moved to position";
+                ENDIF
+            ELSEIF data = "DISCONNECT" THEN
+                ! Close connection
+                ! Send disconnect message
+                SocketSend clientSocket \Str:="OK";
+                SocketClose clientSocket;
+                SocketClose serverSocket;
+                connected := FALSE;
+            ELSE
+                TPWrite "Unknown command.";
+            ENDIF
+            
+        ENDWHILE
+    ENDWHILE
+    
+ENDPROC
+=======
+MODULE MainModule
+
+! Definition of variables for tcp ip connection
+VAR socketdev serverSocket;
+VAR socketdev clientSocket;
+VAR string data;
+VAR bool connected;
+VAR bool ok; ! needed to use StrToVal, cf rapid technnical reference manual
+VAR string position_str;
+VAR num position_num;
+VAR num nb_pos;
+
+! Robot positions
+CONST robtarget p1:=[[-12.66,5.59,1391.70],[0.5,2.63906E-8,0.866025,1.04791E-8],[0,-1,0,0],[9E+9,9E+9,9E+9,9E+9,9E+9,9E+9]];
+CONST robtarget p2:=[[-13.11,-289.23,865.56],[0.499997,-0.000123741,0.866027,0.000189551],[0,-1,0,0],[9E+9,9E+9,9E+9,9E+9,9E+9,9E+9]];
+CONST robtarget p3:=[[-13.23,323.49,865.60],[0.500307,-0.00022458,0.865848,0.000287929],[0,-1,0,0],[9E+9,9E+9,9E+9,9E+9,9E+9,9E+9]];
+CONST robtarget p4:=[[292.12,70.62,865.60],[0.500307,-0.000224538,0.865848,0.000287917],[0,-1,0,0],[9E+9,9E+9,9E+9,9E+9,9E+9,9E+9]];
+
+! Configuration of real robot
+TASK PERS tooldata Tooldata_2:=[TRUE,[[0,0,0],[1,0,0,0]],[1,[0,0,1],[1,0,0,0],0,0,0]];
+TASK PERS wobjdata Workobject_2:=[FALSE,TRUE,"",[[1000,0,0],[1,0,0,0]],[[0,0,0],[1,0,0,0]]];
+
+! Position array (robot targets)
+VAR robtarget scan_positions{4};
+
+
+PROC main()
+        ! Initialize the array elements
+        scan_positions{1} := p1;
+        scan_positions{2} := p2;
+        scan_positions{3} := p3;
+        scan_positions{4} := p4;
+        nb_pos := Dim(scan_positions, 1);
+        
+    WHILE TRUE DO
+        ! Create and bind socket
+        SocketCreate serverSocket;
+        SocketBind serverSocket, "127.0.0.1", 1234;
+        SocketListen serverSocket;
+
+        TPWrite "Waiting for connection...";
+        SocketAccept serverSocket, clientSocket;
+        TPWrite "Client connected.";
+        connected := TRUE ;
+        
+        WHILE connected DO
+            ! Receive command from Python client
+            SocketReceive clientSocket \Str:=data;
+            TPWrite "Received: " + data;
+
+            ! Execute based on command
+            IF StrMatch(data, 1, "MOVE") = 1 THEN
+                ! Extract position number from command
+                ! Expected format: "MOVE 1", "MOVE 2", etc.
+                position_str := StrPart(data, StrLen(data), 1);
+                ok:= StrToVal(position_str,position_num) ;                    
+                ! Validate position number
+                IF position_num >= 1 AND position_num <= nb_pos THEN
+                    MoveL scan_positions{position_num}, v200, fine, Tooldata_2\WObj:=Workobject_2;
+                    ! Wait for the robot to reach and stop at the position
+                    WaitRob \InPos;
+                    ! Send confirmation back
+                    SocketSend clientSocket \Str:="moved to position";
+                ENDIF
+            ELSEIF data = "DISCONNECT" THEN
+                ! Close connection
+                ! Send disconnect message
+                SocketSend clientSocket \Str:="OK";
+                SocketClose clientSocket;
+                SocketClose serverSocket;
+                connected := FALSE;
+            ELSE
+                TPWrite "Unknown command.";
+            ENDIF
+            
+        ENDWHILE
+    ENDWHILE
+    
+ENDPROC
+>>>>>>> 1f5935a291bc6e80918cf3a2c91adbc8e9a8f452
+ENDMODULE
